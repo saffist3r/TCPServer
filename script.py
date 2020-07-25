@@ -1,7 +1,10 @@
 import socket, select
+from datetime import datetime
 
-EOL1 = b'QUIT'
-EOL2 = b'\n\r\n'
+
+EOL = b'QUIT'
+DATE = b'DATE'
+EHLO = b'EHLO'
 
 
 serversocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -24,20 +27,36 @@ try:
             epoll.register(connection.fileno(), select.EPOLLIN)
             connections[connection.fileno()] = connection
             requests[connection.fileno()] = b''
-            responses[connection.fileno()] = b'Hey'
+            responses[connection.fileno()] = b''
          elif event & select.EPOLLIN:
             latestReq = connections[fileno].recv(1024)
             requests[fileno] += latestReq
             print(requests[fileno])
-            if EOL1 in requests[fileno] or EOL2 in requests[fileno]:
+            if DATE in latestReq:
+                if EHLO in requests[fileno]:
+                    responses[fileno]+= datetime.now().strftime("%d/%m/%YT%H:%M:%S").encode()#JJ/MM/AAAATHH:mm:ss
+                    responses[fileno] += b'\n'
+                else:
+                    responses[fileno]+=b'550 BAD STATE\n'
+                epoll.modify(fileno,select.EPOLLOUT)
+            elif EOL in latestReq:
+               responses[fileno]+=b'221 Bye\n'
                epoll.modify(fileno, select.EPOLLOUT)
-               print('-'*40 + '\n' + requests[fileno].decode()[:-2])
+            elif EHLO in latestReq:
+                stringToPrint = '250 Pleased to meet you'+latestReq.decode().replace('EHLO ', ' ')
+                responses[fileno] += stringToPrint.encode()
+                epoll.modify(fileno, select.EPOLLOUT)
+
          elif event & select.EPOLLOUT:
             byteswritten = connections[fileno].send(responses[fileno])
-            responses[fileno] = responses[fileno][byteswritten:]
-            if len(responses[fileno]) == 0:
-               epoll.modify(fileno, 0)
-               connections[fileno].shutdown(socket.SHUT_RDWR)
+            responses[fileno] = b''
+            print('Sent ' + str(byteswritten) + 'bytes as a response.')
+            if EOL in requests[fileno]:
+                epoll.modify(fileno, 0)
+                connections[fileno].shutdown(socket.SHUT_RDWR)
+            else:
+                epoll.modify(fileno, select.EPOLLIN)
+
          elif event & select.EPOLLHUP:
             epoll.unregister(fileno)
             connections[fileno].close()
